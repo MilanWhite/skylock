@@ -58,9 +58,7 @@ def post_payload(answers):
         "answers": answers
     }
     try:
-        r = requests.post(f"{API_BASE}/api/pings",
-                          headers={"Content-Type":"application/json","X-API-Key":API_KEY},
-                          data=json.dumps(payload), timeout=3)
+        r = requests.post(f"{API_BASE}/api/pings", headers={"Content-Type":"application/json"}, data=json.dumps(payload), timeout=3)
         return r.ok
     except Exception:
         return False
