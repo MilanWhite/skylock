@@ -1,4 +1,4 @@
-"""Quick local runner to test satellite nearest-neighbor logic.
+"""Quick local runner to test satellite nearest-neighbor logic (OOP version).
 
 This script uses a sample location on the University of Toronto St. George
 campus and prints the nearest satellite found in the local TLE database.
@@ -10,7 +10,8 @@ Notes:
 from datetime import datetime, timezone
 import json
 
-from server.service.satellite_service import find_nearest_satellite
+from server.model.repository import SqliteTleRepository
+from server.service.satellite_service import Sgp4SatelliteService
 
 
 def pretty_print_satellite(info: dict):
@@ -40,9 +41,12 @@ def main():
 
     when = datetime.now(timezone.utc)
 
+    repo = SqliteTleRepository()
+    service = Sgp4SatelliteService(repo)
+
     print(f"Finding nearest satellite to ({lat_deg}, {lon_deg}, {alt_m} m) at {when.isoformat()} UTC")
 
-    nearest = find_nearest_satellite(lat_deg, lon_deg, alt_m, when=when)
+    nearest = service.find_nearest_satellite(lat_deg, lon_deg, alt_m, when=when)
 
     pretty_print_satellite(nearest)
 

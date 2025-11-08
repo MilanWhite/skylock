@@ -4,7 +4,88 @@ import math
 
 from sgp4.api import Satrec, jday
 
-from server.model.repository import fetch_all_tles
+from server.model.repository import ITleRepository, SqliteTleRepository
+
+# OOP interface for satellite service
+import abc
+
+class ISatelliteService(abc.ABC):
+    @abc.abstractmethod
+    def find_nearest_satellite(self, lat_deg: float, lon_deg: float, alt_m: float, when: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+        pass
+
+    @abc.abstractmethod
+    def get_all_satellite_states(self, when: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        pass
+
+
+class Sgp4SatelliteService(ISatelliteService):
+    def __init__(self, tle_repository: ITleRepository):
+        self.tle_repository = tle_repository
+
+    def find_nearest_satellite(self, lat_deg: float, lon_deg: float, alt_m: float, when: Optional[datetime] = None) -> Optional[Dict[str, Any]]:
+        if when is None:
+            when = datetime.now(timezone.utc)
+        user_ecef = _geodetic_to_ecef(lat_deg, lon_deg, alt_m)
+        tles = self.tle_repository.fetch_all_tles()
+        best = None
+        best_dist = float("inf")
+        for tle in tles:
+            satrec = _satrec_from_tle(tle["line1"], tle["line2"])
+            if satrec is None:
+                continue
+            state = _compute_state_for_datetime(satrec, when)
+            if state.get("error", 0) != 0:
+                continue
+            eci_pos = state.get("position_km")
+            if not eci_pos:
+                continue
+            ecef_pos = _eci_to_ecef(eci_pos, when)
+            dx = ecef_pos[0] - user_ecef[0]
+            dy = ecef_pos[1] - user_ecef[1]
+            dz = ecef_pos[2] - user_ecef[2]
+            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if dist < best_dist:
+                best_dist = dist
+                best = {
+                    "id": tle["id"],
+                    "name": tle["name"],
+                    "source": tle.get("source"),
+                    "fetched_at": tle.get("fetched_at"),
+                    "when_utc": when.isoformat(),
+                    "distance_km": dist,
+                    "position_ecef_km": ecef_pos,
+                    "position_eci_km": eci_pos,
+                    "velocity_km_s": state.get("velocity_km_s"),
+                }
+        return best
+
+    def get_all_satellite_states(self, when: Optional[datetime] = None) -> List[Dict[str, Any]]:
+        tles = self.tle_repository.fetch_all_tles()
+        if when is None:
+            when = datetime.now(timezone.utc)
+        results: List[Dict[str, Any]] = []
+        for tle in tles:
+            satrec = _satrec_from_tle(tle["line1"], tle["line2"])
+            if satrec is None:
+                results.append({
+                    "id": tle["id"],
+                    "name": tle["name"],
+                    "error": "invalid_tle",
+                })
+                continue
+            state = _compute_state_for_datetime(satrec, when)
+            results.append({
+                "id": tle["id"],
+                "name": tle["name"],
+                "source": tle.get("source"),
+                "fetched_at": tle.get("fetched_at"),
+                "when_utc": when.isoformat(),
+                "sgp4_error": state["error"],
+                "position_km": state.get("position_km"),
+                "velocity_km_s": state.get("velocity_km_s"),
+            })
+        return results
 
 
 def _jd_from_datetime(when: datetime):
@@ -84,70 +165,6 @@ def _geodetic_to_ecef(lat_deg: float, lon_deg: float, alt_m: float) -> List[floa
     z = (N * (1 - e2) + alt_km) * sin_lat
     return [x, y, z]
 
-
-def find_nearest_satellite(lat_deg: float, lon_deg: float, alt_m: float, when: Optional[datetime] = None, conn=None) -> Optional[Dict[str, Any]]:
-    """Find the nearest satellite (Euclidean distance) to the given geodetic
-    position at the specified UTC time.
-
-    Args:
-      lat_deg, lon_deg: degrees
-      alt_m: altitude in meters
-      when: datetime (UTC). If None uses now.
-      conn: optional DB connection forwarded to repository.
-
-    Returns:
-      Dict with satellite info and distance_km, or None if no satellites.
-    """
-    if when is None:
-        when = datetime.now(timezone.utc)
-
-    # Convert user location to ECEF (km)
-    user_ecef = _geodetic_to_ecef(lat_deg, lon_deg, alt_m)
-
-    # Fetch TLEs and compute positions
-    tles = fetch_all_tles(conn)
-    best = None
-    best_dist = float("inf")
-
-    for tle in tles:
-        satrec = _satrec_from_tle(tle["line1"], tle["line2"])
-        if satrec is None:
-            continue
-
-        # Compute ECI position at time
-        state = _compute_state_for_datetime(satrec, when)
-        if state.get("error", 0) != 0:
-            # Skip propagations with errors
-            continue
-
-        eci_pos = state.get("position_km")
-        if not eci_pos:
-            continue
-
-        # Convert to ECEF and compute distance
-        ecef_pos = _eci_to_ecef(eci_pos, when)
-        dx = ecef_pos[0] - user_ecef[0]
-        dy = ecef_pos[1] - user_ecef[1]
-        dz = ecef_pos[2] - user_ecef[2]
-        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
-
-        if dist < best_dist:
-            best_dist = dist
-            best = {
-                "id": tle["id"],
-                "name": tle["name"],
-                "source": tle.get("source"),
-                "fetched_at": tle.get("fetched_at"),
-                "when_utc": when.isoformat(),
-                "distance_km": dist,
-                "position_ecef_km": ecef_pos,
-                "position_eci_km": eci_pos,
-                "velocity_km_s": state.get("velocity_km_s"),
-            }
-
-    return best
-
-
 # Data querying is intentionally kept in the model/repository layer. The
 # service calls `fetch_all_tles()` (which may open its own DB connection).
 
@@ -189,45 +206,5 @@ def _compute_state_for_datetime(satrec: Satrec, when: datetime) -> Dict[str, Any
     }
 
 
-def get_all_satellite_states(when: Optional[datetime] = None, conn=None) -> List[Dict[str, Any]]:
-    """Fetch all TLEs from the DB and compute SGP4 states for each satellite.
-
-    Args:
-      when: datetime in UTC to evaluate the SGP4 propagation. If None uses now UTC.
-      conn: optional DB connection (sqlite3). If None, a connection will be created.
-
-    Returns:
-      A list of dicts, each with satellite metadata and computed state.
-    """
-    # Fetch TLEs using the data layer (repository). The repository will
-    # open/close its own connection if `conn` is None.
-    tles = fetch_all_tles(conn)
-
-    if when is None:
-        when = datetime.now(timezone.utc)
-
-    results: List[Dict[str, Any]] = []
-    for tle in tles:
-        satrec = _satrec_from_tle(tle["line1"], tle["line2"])
-        if satrec is None:
-            results.append({
-                "id": tle["id"],
-                "name": tle["name"],
-                "error": "invalid_tle",
-            })
-            continue
-
-        state = _compute_state_for_datetime(satrec, when)
-
-        results.append({
-            "id": tle["id"],
-            "name": tle["name"],
-            "source": tle.get("source"),
-            "fetched_at": tle.get("fetched_at"),
-            "when_utc": when.isoformat(),
-            "sgp4_error": state["error"],
-            "position_km": state.get("position_km"),
-            "velocity_km_s": state.get("velocity_km_s"),
-        })
-
-    return results
+    # Deprecated: use Sgp4SatelliteService.get_all_satellite_states instead.
+    raise NotImplementedError("Use Sgp4SatelliteService.get_all_satellite_states() with a repository instance.")
