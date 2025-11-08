@@ -62,15 +62,6 @@ class BuzzerManager:
     patterns, and melodies.
     """
 
-    # Musical note frequencies (Hz) for passive buzzers
-    NOTES = {
-        'C4': 261, 'D4': 294, 'E4': 329, 'F4': 349,
-        'G4': 392, 'A4': 440, 'B4': 494,
-        'C5': 523, 'D5': 587, 'E5': 659, 'F5': 698,
-        'G5': 784, 'A5': 880, 'B5': 988,
-        'REST': 0
-    }
-
     def __init__(self, pin=17, buzzer_type='active'):
         """
         Initialize the buzzer manager.
@@ -82,40 +73,24 @@ class BuzzerManager:
         Raises:
             ValueError: If invalid buzzer_type
         """
-        if buzzer_type not in ['active', 'passive']:
-            raise ValueError("buzzer_type must be 'active' or 'passive'")
 
         self.pin = pin
-        self.buzzer_type = buzzer_type
-        self.pwm = None
+        self.buzzer_type = 'active'
 
         # Setup GPIO
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         GPIO.setup(self.pin, GPIO.OUT)
 
-        # For passive buzzers, setup PWM
-        if self.buzzer_type == 'passive':
-            self.pwm = GPIO.PWM(self.pin, 1000)  # Start with 1000Hz
-            self.pwm.start(0)  # 0% duty cycle (off)
-
-        print(f"✓ Buzzer initialized on GPIO {self.pin} ({buzzer_type})")
+        print(f"✓ Buzzer initialized on GPIO {self.pin} (active)")
 
     def on(self):
         """Turn buzzer on continuously."""
-        if self.buzzer_type == 'active':
-            GPIO.output(self.pin, GPIO.HIGH)
-        else:
-            # For passive, use a default tone
-            self.pwm.ChangeFrequency(1000)
-            self.pwm.ChangeDutyCycle(50)
+        GPIO.output(self.pin, GPIO.HIGH)
 
     def off(self):
         """Turn buzzer off."""
-        if self.buzzer_type == 'active':
-            GPIO.output(self.pin, GPIO.LOW)
-        else:
-            self.pwm.ChangeDutyCycle(0)
+        GPIO.output(self.pin, GPIO.LOW)
 
     def beep(self, duration=0.1, times=1, pause=0.1):
         """
@@ -153,53 +128,40 @@ class BuzzerManager:
 
     def play_tone(self, frequency, duration=0.5):
         """
-        Play a specific tone (passive buzzer only).
+        Play a specific tone.
+
+        Note: passive-tone generation is not supported. For active buzzers
+        we emulate a tone by a short on/off beep of the requested duration.
 
         Args:
-            frequency (int): Frequency in Hz (or note name like 'A4')
+            frequency (int|str): Ignored for active buzzers (kept for API
+                compatibility).
             duration (float): Duration in seconds
         """
-        if self.buzzer_type == 'active':
-            # Active buzzer can only beep
-            self.beep(duration)
-            return
-
-        # Convert note name to frequency if needed
-        if isinstance(frequency, str):
-            frequency = self.NOTES.get(frequency.upper(), 440)
-
-        if frequency == 0:  # REST
-            self.off()
-            time.sleep(duration)
-            return
-
-        self.pwm.ChangeFrequency(frequency)
-        self.pwm.ChangeDutyCycle(50)  # 50% duty cycle
+        # For active buzzer, just turn on for duration
+        self.on()
         time.sleep(duration)
-        self.pwm.ChangeDutyCycle(0)
+        self.off()
 
     def play_melody(self, notes, durations):
         """
-        Play a melody (passive buzzer only).
+        Play a melody.
+
+        Note: real melodies require a passive buzzer (PWM). For active
+        buzzers we fall back to a sequence of beeps using the durations
+        provided.
 
         Args:
-            notes (list): List of frequencies in Hz or note names
+            notes (list): Ignored for active buzzers (kept for API compatibility)
             durations (list): List of durations in seconds
-
-        Example:
-            buzzer.play_melody(['C4', 'E4', 'G4', 'C5'], [0.3, 0.3, 0.3, 0.5])
         """
-        if self.buzzer_type == 'active':
-            # Active buzzer - convert to beep pattern
-            self.beep_pattern(durations)
+        if len(durations) == 0:
             return
 
-        if len(notes) != len(durations):
-            raise ValueError("notes and durations must have same length")
-
-        for note, duration in zip(notes, durations):
-            self.play_tone(note, duration)
-            time.sleep(0.05)  # Small pause between notes
+        # Play a sequence of beeps for each duration
+        for duration in durations:
+            self.beep(duration=duration)
+            time.sleep(0.05)
 
     # ============================================================
     # Pre-defined Sound Patterns
@@ -207,40 +169,23 @@ class BuzzerManager:
 
     def success_sound(self):
         """Play success notification sound."""
-        if self.buzzer_type == 'passive':
-            # Rising tone melody
-            self.play_melody(['C4', 'E4', 'G4'], [0.1, 0.1, 0.2])
-        else:
-            # Quick double beep
-            self.beep(0.1, times=2, pause=0.05)
+        # Quick double beep
+        self.beep(0.1, times=2, pause=0.05)
 
     def error_sound(self):
         """Play error notification sound."""
-        if self.buzzer_type == 'passive':
-            # Descending tone
-            self.play_melody(['G4', 'E4', 'C4'], [0.15, 0.15, 0.3])
-        else:
-            # Long beep
-            self.beep(0.5)
+        # Long beep
+        self.beep(0.5)
 
     def warning_sound(self):
         """Play warning notification sound."""
-        if self.buzzer_type == 'passive':
-            # Alternating tones
-            self.play_melody(['A4', 'C5', 'A4'], [0.2, 0.2, 0.2])
-        else:
-            # Three quick beeps
-            self.beep(0.1, times=3, pause=0.1)
+        # Three quick beeps
+        self.beep(0.1, times=3, pause=0.1)
 
     def startup_sound(self):
         """Play startup/boot sound."""
-        if self.buzzer_type == 'passive':
-            # Rising scale
-            self.play_melody(['C4', 'D4', 'E4', 'F4', 'G4'],
-                           [0.1, 0.1, 0.1, 0.1, 0.2])
-        else:
-            # Two beeps
-            self.beep(0.1, times=2, pause=0.2)
+        # Two beeps
+        self.beep(0.1, times=2, pause=0.2)
 
     def sos_pattern(self):
         """Play SOS pattern (... --- ...)."""
@@ -258,16 +203,9 @@ class BuzzerManager:
         Args:
             duration (float): Total duration in seconds
         """
-        if self.buzzer_type == 'passive':
-            # Alternating high/low tones
-            end_time = time.time() + duration
-            while time.time() < end_time:
-                self.play_tone(800, 0.2)
-                self.play_tone(400, 0.2)
-        else:
-            # Rapid beeping
-            beep_count = int(duration / 0.3)
-            self.beep(0.15, times=beep_count, pause=0.15)
+        # Rapid beeping for active buzzer
+        beep_count = max(1, int(duration / 0.3))
+        self.beep(0.15, times=beep_count, pause=0.15)
 
     def notification_sound(self, level='info'):
         """
@@ -289,8 +227,6 @@ class BuzzerManager:
     def cleanup(self):
         """Clean up GPIO resources."""
         self.off()
-        if self.pwm:
-            self.pwm.stop()
         GPIO.cleanup(self.pin)
         print("✓ Buzzer cleaned up")
 
@@ -307,13 +243,9 @@ if __name__ == "__main__":
     print("="*60)
     print()
 
-    # Ask user for buzzer type
-    print("What type of buzzer do you have?")
-    print("1. Active buzzer (simple on/off)")
-    print("2. Passive buzzer (can play tones)")
-    choice = input("\nEnter choice (1-2): ").strip()
-
-    buzzer_type = 'passive' if choice == '2' else 'active'
+    # Only active buzzer supported
+    print("Using active buzzer (on/off control)")
+    buzzer_type = 'active'
 
     # Ask for GPIO pin
     print("\nWhich GPIO pin is the buzzer connected to?")
@@ -339,8 +271,7 @@ if __name__ == "__main__":
         print("7. SOS pattern")
         print("8. Alarm (3 seconds)")
 
-        if buzzer_type == 'passive':
-            print("9. Play melody")
+        # No passive buzzer options available
 
         test_choice = input("\nEnter choice: ").strip()
         print()
@@ -377,14 +308,9 @@ if __name__ == "__main__":
             print("Playing alarm for 3 seconds...")
             buzzer.alarm_sound(duration=3)
 
-        elif test_choice == '9' and buzzer_type == 'passive':
-            print("Playing melody (Twinkle Twinkle)...")
-            notes = ['C4', 'C4', 'G4', 'G4', 'A4', 'A4', 'G4']
-            durations = [0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.6]
-            buzzer.play_melody(notes, durations)
-
         else:
-            print("Invalid choice")
+            # All melody/tone-specific features were removed; keep other options
+            print("Invalid or unsupported choice")
 
         print("\n" + "="*60)
         print("Test complete!")
