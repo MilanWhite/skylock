@@ -23,6 +23,19 @@ class ITleRepository(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def fetch_satellite_by_id(self, satellite_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a specific satellite's TLE data by its ID.
+
+        Args:
+            satellite_id: The ID of the satellite to fetch.
+
+        Returns:
+            A dictionary containing the satellite's data if found, None otherwise.
+            The dictionary includes: id, name, line1, line2, source, and fetched_at.
+        """
+        pass
+
+    @abc.abstractmethod
     def upsert_tles(self, tles, source: str):
         pass
 
@@ -45,6 +58,44 @@ class SqliteTleRepository(ITleRepository):
         if self._external_conn is not None:
             return self._external_conn, False
         return get_db_connection(), True
+
+    def fetch_satellite_by_id(self, satellite_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch a specific satellite's TLE data by its ID.
+
+        Args:
+            satellite_id: The ID of the satellite to fetch.
+
+        Returns:
+            A dictionary containing the satellite's data if found, None otherwise.
+        """
+        conn, close_conn = self._get_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT id, name, line1, line2, source, fetched_at FROM tles WHERE id = ?",
+                (satellite_id,)
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+
+            return {
+                "id": row[0],
+                "name": row[1],
+                "line1": row[2],
+                "line2": row[3],
+                "source": row[4],
+                "fetched_at": row[5],
+            }
+        except Exception as e:
+            print(f"Error in fetch_satellite_by_id: {e}")
+            return None
+        finally:
+            if close_conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def fetch_all_tles(self) -> List[Dict[str, Any]]:
         conn, close_conn = self._get_conn()
