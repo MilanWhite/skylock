@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
-# Add project root to Python path
+# Add project root to Python path so we can import from 'server'
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -13,6 +13,12 @@ pygame.init()
 # Import satellite service
 from server.model.repository import SqliteTleRepository
 from server.service.satellite_service import Sgp4SatelliteService
+from server.service.tle_scheduler_service import TleSchedulerService
+
+from compass_module import CompassManager
+
+# Initialize compass
+compass = CompassManager()
 
 API_BASE = "http://192.168.137.1:4000"
 DEVICE_ID = "autosat-01"
@@ -26,16 +32,25 @@ user_pdop = 2.9
 # Satellite tracking
 satellite_info = None
 last_satellite_update = 0
-SATELLITE_UPDATE_INTERVAL = 5  # Update every 5 seconds
+SATELLITE_UPDATE_INTERVAL = 3  # Update every 5 seconds
 
-# Initialize satellite service
+# Initialize satellite service with scheduler
 try:
     repo = SqliteTleRepository()
+    scheduler = TleSchedulerService(repo, tle_group="amateur", interval_seconds=3600)
     satellite_service = Sgp4SatelliteService(repo)
+    
+    # Start scheduler with initial fetch
+    print("Starting scheduler and fetching initial TLE data...")
+    scheduler.start(initial_fetch=True)
+    
+    # Give scheduler a moment to fetch data
+    time.sleep(2)
     print("Satellite service initialized successfully")
 except Exception as e:
     print(f"Failed to initialize satellite service: {e}")
     satellite_service = None
+    scheduler = None
 
 # ====== UI PRIMITIVES ======
 W, H = pygame.display.Info().current_w, pygame.display.Info().current_h
@@ -150,6 +165,7 @@ def update_satellite_position():
         sat_data = satellite_service.find_nearest_satellite(
             user_lat, user_lon, user_alt, when=when
         )
+        print(f"Nearest satellite data: {sat_data}")
         
         if sat_data:
             ecef = sat_data.get("position_ecef_km", [0, 0, 0])
@@ -191,6 +207,7 @@ def post_payload(answers):
         "pdop": user_pdop,
         "answers": answers
     }
+    print(f"Posting payload: {json.dumps(payload)}")
     try:
         r = requests.post(f"{API_BASE}/api/pings", 
                          headers={"Content-Type":"application/json"}, 
@@ -217,6 +234,41 @@ def make_button(x, y, w, h, label, color):
 clock = pygame.time.Clock()
 
 # ====== RENDER FUNCTIONS ======
+def draw_bearing_arrow(surf, center_x, center_y, radius, satellite_bearing):
+    """
+    Draw an arrow pointing to the satellite relative to device heading.
+    
+    Args:
+        surf: pygame surface
+        center_x, center_y: center of arrow
+        radius: length of arrow
+        satellite_bearing: bearing to satellite in degrees (0 = North)
+    """
+    # Get current device heading
+    heading = compass.get_heading()
+    
+    # Relative angle between device heading and satellite
+    relative_angle = math.radians(satellite_bearing - heading)
+    
+    # Arrow tip coordinates
+    tip_x = center_x + radius * math.sin(relative_angle)
+    tip_y = center_y - radius * math.cos(relative_angle)
+    
+    # Draw line (arrow shaft)
+    pygame.draw.line(surf, ACCENT, (center_x, center_y), (tip_x, tip_y), 6)
+    
+    # Draw arrow head (triangle)
+    arrow_size = 20
+    angle_left = relative_angle + math.radians(150)
+    angle_right = relative_angle - math.radians(150)
+    
+    left_x = tip_x + arrow_size * math.sin(angle_left)
+    left_y = tip_y - arrow_size * math.cos(angle_left)
+    
+    right_x = tip_x + arrow_size * math.sin(angle_right)
+    right_y = tip_y - arrow_size * math.cos(angle_right)
+    
+    pygame.draw.polygon(surf, ACCENT, [(tip_x, tip_y), (left_x, left_y), (right_x, right_y)])
 
 def render_start():
     """Initial welcome screen"""
@@ -234,12 +286,12 @@ def render_align():
     """Satellite alignment instruction screen"""
     screen.fill(BG)
     
+    # Arrow pointing to satellite
     if satellite_info:
-        draw_text_center("Face device to satellite", H//2 - 100, ACCENT)
-        sat_name = satellite_info['name'][:25]  # Truncate if too long
-        draw_text_center(sat_name, H//2, FG, FONT_MED)
-        draw_text_center(f"Bearing: {satellite_info['bearing']:.1f}°", H//2 + 60, ACCENT, FONT)
-        draw_text_center(f"Distance: {satellite_info['distance_km']:.1f} km", H//2 + 100, ACCENT, FONT)
+        center_x, center_y = W//2, H//2 + 150  # adjust position
+        arrow_radius = 150
+        draw_bearing_arrow(screen, center_x, center_y, arrow_radius, satellite_info['bearing'])
+
     else:
         draw_text_center("Searching for satellite...", H//2 - 50, WARN)
     
@@ -351,103 +403,111 @@ buttons = []
 # Do initial satellite update
 update_satellite_position()
 
-while True:
-    # Update positions
-    update_gps_position()
-    update_satellite_position()
-    
-    for e in pygame.event.get():
-        if e.type == pygame.QUIT:
-            pygame.quit()
-            raise SystemExit
-        if e.type == pygame.KEYDOWN:
-            if e.key == pygame.K_q:
+try:
+    while True:
+        # Update positions
+        update_gps_position()
+        update_satellite_position()
+        
+        for e in pygame.event.get():
+            if e.type == pygame.QUIT:
                 pygame.quit()
                 raise SystemExit
-        
-        if e.type == pygame.MOUSEBUTTONDOWN:
-            x, y = e.pos
+            if e.type == pygame.KEYDOWN:
+                if e.key == pygame.K_q:
+                    pygame.quit()
+                    raise SystemExit
             
-            if mode == "START":
-                if buttons[0].hit((x, y)):
-                    mode = "ALIGN"
-                    
-            elif mode == "ALIGN":
-                if buttons[0].hit((x, y)):
-                    mode = "DANGER"
-                    
-            elif mode == "DANGER":
-                if buttons[0].hit((x, y)):  # YES
-                    answers["in_danger"] = "yes"
-                    emergency_q_idx = 0
-                    mode = "EMERGENCY"
-                elif buttons[1].hit((x, y)):  # NO
-                    answers["in_danger"] = "no"
-                    mode = "CHECKIN"
-                    
-            elif mode == "EMERGENCY":
-                questions_keys = ["injured", "alone", "threat_active"]
-                if buttons[0].hit((x, y)):  # YES
-                    answers[questions_keys[emergency_q_idx]] = "yes"
-                    emergency_q_idx += 1
-                elif buttons[1].hit((x, y)):  # NO
-                    answers[questions_keys[emergency_q_idx]] = "no"
-                    emergency_q_idx += 1
+            if e.type == pygame.MOUSEBUTTONDOWN:
+                x, y = e.pos
                 
-                if emergency_q_idx >= 3:
-                    mode = "SENDING"
-                    pygame.display.flip()
-                    ok = post_payload(answers)
-                    mode = "SENT" if ok else "ERROR"
+                if mode == "START":
+                    if buttons[0].hit((x, y)):
+                        mode = "ALIGN"
+                        
+                elif mode == "ALIGN":
+                    if buttons[0].hit((x, y)):
+                        mode = "DANGER"
+                        
+                elif mode == "DANGER":
+                    if buttons[0].hit((x, y)):  # YES
+                        answers["in_danger"] = "yes"
+                        emergency_q_idx = 0
+                        mode = "EMERGENCY"
+                    elif buttons[1].hit((x, y)):  # NO
+                        answers["in_danger"] = "no"
+                        mode = "CHECKIN"
+                        
+                elif mode == "EMERGENCY":
+                    questions_keys = ["injured", "alone", "threat_active"]
+                    if buttons[0].hit((x, y)):  # YES
+                        answers[questions_keys[emergency_q_idx]] = "yes"
+                        emergency_q_idx += 1
+                    elif buttons[1].hit((x, y)):  # NO
+                        answers[questions_keys[emergency_q_idx]] = "no"
+                        emergency_q_idx += 1
                     
-            elif mode == "CHECKIN":
-                if buttons[0].hit((x, y)):  # Checking In
-                    answers["status"] = "checking_in"
-                    mode = "SENDING"
-                elif buttons[1].hit((x, y)):  # Low Battery
-                    answers["status"] = "low_battery"
-                    mode = "SENDING"
-                elif buttons[2].hit((x, y)):  # Doing Good
-                    answers["status"] = "doing_good"
-                    mode = "SENDING"
-                
-                if mode == "SENDING":
-                    pygame.display.flip()
-                    ok = post_payload(answers)
-                    mode = "SENT" if ok else "ERROR"
+                    if emergency_q_idx >= 3:
+                        mode = "SENDING"
+                        pygame.display.flip()
+                        ok = post_payload(answers)
+                        mode = "SENT" if ok else "ERROR"
+                        
+                elif mode == "CHECKIN":
+                    if buttons[0].hit((x, y)):  # Checking In
+                        answers["status"] = "checking_in"
+                        mode = "SENDING"
+                    elif buttons[1].hit((x, y)):  # Low Battery
+                        answers["status"] = "low_battery"
+                        mode = "SENDING"
+                    elif buttons[2].hit((x, y)):  # Doing Good
+                        answers["status"] = "doing_good"
+                        mode = "SENDING"
                     
-            elif mode == "SENT":
-                if buttons[0].hit((x, y)):  # NEW MESSAGE
-                    # Reset to start
-                    mode = "START"
-                    answers = {}
-                    emergency_q_idx = 0
-                    
-            elif mode == "ERROR":
-                if buttons[0].hit((x, y)):  # RETRY
-                    # Reset to start instead of retrying
-                    mode = "START"
-                    answers = {}
-                    emergency_q_idx = 0
-    
-    # Render current screen
-    if mode == "START":
-        buttons = render_start()
-    elif mode == "ALIGN":
-        buttons = render_align()
-    elif mode == "DANGER":
-        buttons = render_danger_question()
-    elif mode == "EMERGENCY":
-        buttons = render_emergency_questions(emergency_q_idx)
-    elif mode == "CHECKIN":
-        buttons = render_checkin_options()
-    elif mode == "SENDING":
-        render_sending()
-        buttons = []
-    elif mode == "SENT":
-        buttons = render_sent()
-    elif mode == "ERROR":
-        buttons = render_error()
-    
-    pygame.display.flip()
-    clock.tick(60)
+                    if mode == "SENDING":
+                        pygame.display.flip()
+                        ok = post_payload(answers)
+                        mode = "SENT" if ok else "ERROR"
+                        
+                elif mode == "SENT":
+                    if buttons[0].hit((x, y)):  # NEW MESSAGE
+                        # Reset to start
+                        mode = "START"
+                        answers = {}
+                        emergency_q_idx = 0
+                        
+                elif mode == "ERROR":
+                    if buttons[0].hit((x, y)):  # RETRY
+                        # Reset to start instead of retrying
+                        mode = "START"
+                        answers = {}
+                        emergency_q_idx = 0
+        
+        # Render current screen
+        if mode == "START":
+            buttons = render_start()
+        elif mode == "ALIGN":
+            buttons = render_align()
+        elif mode == "DANGER":
+            buttons = render_danger_question()
+        elif mode == "EMERGENCY":
+            buttons = render_emergency_questions(emergency_q_idx)
+        elif mode == "CHECKIN":
+            buttons = render_checkin_options()
+        elif mode == "SENDING":
+            render_sending()
+            buttons = []
+        elif mode == "SENT":
+            buttons = render_sent()
+        elif mode == "ERROR":
+            buttons = render_error()
+        
+        pygame.display.flip()
+        clock.tick(60)
+
+finally:
+    # Clean shutdown
+    print("\nShutting down...")
+    if scheduler is not None:
+        scheduler.stop()
+    pygame.quit()
