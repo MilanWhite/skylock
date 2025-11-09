@@ -13,11 +13,8 @@ type Ping = {
 	answers: unknown;
 };
 
-const MAX_PINS = 500; // cap history to avoid leaks
-
 type QA = { q: string; a: string };
 function parseAnswers(raw: unknown) {
-	// answers is a list like [{q:"in_danger", a:"yes"}, ...]
 	const list = Array.isArray(raw) ? (raw as QA[]) : [];
 	const rec: Record<string, string> = {};
 	for (const it of list) {
@@ -41,13 +38,38 @@ function parseAnswers(raw: unknown) {
 				["in_danger", rec["in_danger"] ?? "unknown"],
 				["status", rec["status"] ?? "unknown"],
 		  ];
-	return { inDanger, view }; // view is [key,value][] for rendering
+	return { inDanger, view };
 }
 
 export default function MapView() {
 	const ref = useRef<HTMLDivElement>(null);
 	const mapRef = useRef<Map | null>(null);
-	const [pings, setPings] = useState<Ping[]>([]);
+	const [latestByDevice, setLatestByDevice] = useState<Record<string, Ping>>(
+		{}
+	);
+	const fetchLock = useRef(false);
+	const fetchTimer = useRef<number | null>(null);
+
+	const fetchLatest = async () => {
+		if (fetchLock.current) return;
+		fetchLock.current = true;
+		try {
+			const host = window.location.hostname || "localhost";
+			const res = await fetch(`http://${host}:4000/api/pings/all`, {
+				cache: "no-store",
+			});
+			const rows: Ping[] = await res.json();
+			const next: Record<string, Ping> = {};
+			for (const p of rows) next[p.deviceId] = p;
+			setLatestByDevice(next);
+		} catch {}
+		fetchLock.current = false;
+	};
+
+	// initial fetch
+	useEffect(() => {
+		fetchLatest();
+	}, []);
 
 	// map init
 	useEffect(() => {
@@ -58,14 +80,13 @@ export default function MapView() {
 			zoom: 12,
 		});
 		mapRef.current = map;
-
 		return () => {
 			mapRef.current = null;
 			map.remove();
 		};
 	}, []);
 
-	// websocket -> append ping
+	// websocket -> on any data event, refresh from backend (debounced)
 	useEffect(() => {
 		const host = window.location.hostname || "localhost";
 		const WS_URL = `ws://${host}:4000/ws`;
@@ -75,17 +96,18 @@ export default function MapView() {
 			try {
 				const data = JSON.parse(evt.data);
 				if (data?.type === "hello") return;
-				const p = data as Ping;
-				setPings((prev) => {
-					const next = [...prev, p];
-					if (next.length > MAX_PINS)
-						next.splice(0, next.length - MAX_PINS);
-					return next;
-				});
-			} catch {}
+				// debounce bursts to a single refresh
+				if (fetchTimer.current) window.clearTimeout(fetchTimer.current);
+				fetchTimer.current = window.setTimeout(fetchLatest, 150);
+			} catch {
+				// if non-JSON, still refresh
+				if (fetchTimer.current) window.clearTimeout(fetchTimer.current);
+				fetchTimer.current = window.setTimeout(fetchLatest, 150);
+			}
 		};
 
 		return () => {
+			if (fetchTimer.current) window.clearTimeout(fetchTimer.current);
 			try {
 				ws.close(1000, "unmount");
 			} catch {}
@@ -96,9 +118,9 @@ export default function MapView() {
 		<>
 			<div ref={ref} style={{ height: "100vh", width: "100%" }} />
 			{mapRef.current &&
-				pings.map((p) => (
+				Object.values(latestByDevice).map((p) => (
 					<Pin
-						key={`${p.deviceId}-${p.ts}`} // unique per ping
+						key={`${p.deviceId}-${p.ts}`}
 						map={mapRef.current}
 						ping={p}
 					/>
@@ -107,12 +129,12 @@ export default function MapView() {
 	);
 }
 
-// put this above Pin (once in the file)
+// CSS for radiating marker
 function ensurePulseCSS() {
 	if (document.getElementById("pin-pulse-css")) return;
 	const css = `
 @keyframes pin-pulse {
-  0%   { transform: scale(1.8);   opacity: 0.35; }
+  0%   { transform: scale(1.8); opacity: 0.35; }
   70%  { transform: scale(2.6); opacity: 0; }
   100% { transform: scale(2.6); opacity: 0; }
 }
@@ -130,7 +152,6 @@ function ensurePulseCSS() {
 	document.head.appendChild(style);
 }
 
-// replace your Pin with this version
 const Pin = memo(function Pin({ map, ping }: { map: Map; ping: Ping }) {
 	const markerRef = useRef<maplibregl.Marker | null>(null);
 	const popupRef = useRef<maplibregl.Popup | null>(null);
@@ -141,7 +162,6 @@ const Pin = memo(function Pin({ map, ping }: { map: Map; ping: Ping }) {
 		const { inDanger, view } = parseAnswers(ping.answers);
 		const color = inDanger ? "#e11d48" : "#22c55e";
 
-		// element with pulse
 		const wrap = document.createElement("div");
 		wrap.className = "pin-wrap";
 
