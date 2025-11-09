@@ -66,24 +66,21 @@ class CompassManager:
         Raises:
             RuntimeError: If sensors cannot be initialized
         """
-        try:
-            self.i2c = busio.I2C(1)
-            self.mag = LSM303DLH_Mag(self.i2c)
-            self.accel = LSM303_Accel(self.i2c)
+        self.i2c = busio.I2C(1)
+        self.mag = LSM303DLH_Mag(self.i2c)
+        self.accel = LSM303_Accel(self.i2c)
 
             # Calibration offsets (set after calibration)
-            self.cal_offset_x = calibration_offset[0]
-            self.cal_offset_y = calibration_offset[1]
-            self.cal_offset_z = calibration_offset[2]
+        self.cal_offset_x = calibration_offset[0]
+        self.cal_offset_y = calibration_offset[1]
+        self.cal_offset_z = calibration_offset[2]
 
             # For heading stability detection
-            self.previous_readings = []
-            self.stability_window = 5
+        self.previous_readings = []
+        self.stability_window = 5
 
-            print("✓ Compass initialized successfully")
+        print("✓ Compass initialized successfully")
 
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize compass: {e}")
 
     def get_magnetic_field(self):
         """
