@@ -1,0 +1,3 @@
+([('SatelliteEmergencyApp',
+   '/Users/tringuyen/skylock/dist/SatelliteEmergencyApp',
+   'EXECUTABLE')],)

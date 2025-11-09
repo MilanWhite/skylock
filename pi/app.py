@@ -1,9 +1,3 @@
-import os
-# Fix SDL dynamic linking error - MUST BE BEFORE PYGAME IMPORT
-os.environ['SDL_VIDEODRIVER'] = 'x11'
-os.environ['SDL_AUDIODRIVER'] = 'alsa'
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
-
 import json, time, requests, math
 from datetime import datetime, timezone
 import sys
@@ -21,11 +15,6 @@ from server.model.repository import SqliteTleRepository
 from server.service.satellite_service import Sgp4SatelliteService
 from server.service.tle_scheduler_service import TleSchedulerService
 
-from compass_module import CompassManager
-
-# Initialize compass
-compass = CompassManager()
-
 API_BASE = "http://192.168.137.1:4000"
 DEVICE_ID = "autosat-01"
 
@@ -38,7 +27,7 @@ user_pdop = 2.9
 # Satellite tracking
 satellite_info = None
 last_satellite_update = 0
-SATELLITE_UPDATE_INTERVAL = 3  # Update every 3 seconds
+SATELLITE_UPDATE_INTERVAL = 5  # Update every 5 seconds
 
 # Initialize satellite service with scheduler
 try:
@@ -50,11 +39,30 @@ try:
     print("Starting scheduler and fetching initial TLE data...")
     scheduler.start(initial_fetch=True)
     
-    # Give scheduler a moment to fetch data
-    time.sleep(2)
+    # Wait longer for initial fetch to lete
+    print("Waiting for TLE data to be fetched...")
+    max_wait = 30  # Wait up to 30 seconds
+    waited = 0
+    while waited < max_wait:
+        time.sleep(1)
+        waited += 1
+        # Try to see if we have any data
+        try:
+            test_data = repo.fetch_all_tles()
+            if test_data and len(test_data) > 0:
+                print(f"TLE data loaded! Found {len(test_data)} satellites")
+                break
+        except Exception:
+            pass
+    
+    if waited >= max_wait:
+        print("Warning: Timeout waiting for TLE data")
+    
     print("Satellite service initialized successfully")
 except Exception as e:
     print(f"Failed to initialize satellite service: {e}")
+    import traceback
+    traceback.print_exc()
     satellite_service = None
     scheduler = None
 
@@ -154,81 +162,6 @@ def calculate_bearing(lat1, lon1, lat2, lon2):
     bearing_deg = (math.degrees(bearing) + 360) % 360
     return bearing_deg
 
-def draw_bearing_arrow(surf, center_x, center_y, radius, satellite_bearing):
-    """
-    Draw an arrow pointing to the satellite relative to device heading.
-    
-    The arrow rotates to always point toward the satellite, compensating
-    for the device's current heading from the compass.
-    
-    Args:
-        surf: pygame surface
-        center_x, center_y: center of arrow circle
-        radius: length of arrow from center to tip
-        satellite_bearing: absolute bearing to satellite in degrees (0 = North)
-    """
-    # Get current device heading from compass
-    try:
-        heading = compass.get_heading()
-    except Exception as e:
-        print(f"Error reading compass: {e}")
-        heading = 0  # Fallback to north if compass fails
-    
-    # Calculate relative angle between device heading and satellite
-    # This gives us the direction to point relative to where device is facing
-    relative_angle = satellite_bearing - heading
-    
-    # Normalize to -180 to 180 range for shortest rotation
-    while relative_angle > 180:
-        relative_angle -= 360
-    while relative_angle < -180:
-        relative_angle += 360
-    
-    # Convert to radians for trig functions
-    # Note: In screen coordinates, Y increases downward, so we negate for proper rotation
-    angle_rad = math.radians(relative_angle)
-    
-    # Calculate arrow tip position
-    # Using standard unit circle: angle 0 points right, 90 points up
-    # We want 0 to point up (north), so we subtract 90 degrees (π/2 radians)
-    adjusted_angle = angle_rad - math.pi / 2
-    
-    tip_x = center_x + radius * math.cos(adjusted_angle)
-    tip_y = center_y + radius * math.sin(adjusted_angle)
-    
-    # Draw arrow shaft (thick line from center to tip)
-    pygame.draw.line(surf, ACCENT, (center_x, center_y), (tip_x, tip_y), 8)
-    
-    # Draw arrowhead (triangle at tip)
-    arrow_head_size = 25
-    arrow_angle = 150  # degrees for arrowhead wings
-    
-    # Left wing of arrowhead
-    left_angle = adjusted_angle + math.radians(arrow_angle)
-    left_x = tip_x + arrow_head_size * math.cos(left_angle)
-    left_y = tip_y + arrow_head_size * math.sin(left_angle)
-    
-    # Right wing of arrowhead
-    right_angle = adjusted_angle - math.radians(arrow_angle)
-    right_x = tip_x + arrow_head_size * math.cos(right_angle)
-    right_y = tip_y + arrow_head_size * math.sin(right_angle)
-    
-    # Draw filled triangle for arrowhead
-    pygame.draw.polygon(surf, ACCENT, [(tip_x, tip_y), (left_x, left_y), (right_x, right_y)])
-    
-    # Optional: Draw a circle at center for reference
-    pygame.draw.circle(surf, ACCENT, (center_x, center_y), 8)
-    
-    # Optional: Display numeric bearing information
-    bearing_text = FONT_SMALL.render(f"{satellite_bearing:.0f}°", True, ACCENT)
-    text_rect = bearing_text.get_rect(center=(center_x, center_y - radius - 30))
-    surf.blit(bearing_text, text_rect)
-    
-    # Display relative angle (how much to turn)
-    relative_text = FONT_SMALL.render(f"Turn: {relative_angle:+.0f}°", True, FG)
-    text_rect2 = relative_text.get_rect(center=(center_x, center_y + radius + 30))
-    surf.blit(relative_text, text_rect2)
-
 def update_satellite_position():
     """Update the nearest satellite position"""
     global satellite_info, last_satellite_update
@@ -246,7 +179,6 @@ def update_satellite_position():
         sat_data = satellite_service.find_nearest_satellite(
             user_lat, user_lon, user_alt, when=when
         )
-        print(f"Nearest satellite data: {sat_data}")
         
         if sat_data:
             ecef = sat_data.get("position_ecef_km", [0, 0, 0])
@@ -288,7 +220,6 @@ def post_payload(answers):
         "pdop": user_pdop,
         "answers": answers
     }
-    print(f"Posting payload: {json.dumps(payload)}")
     try:
         r = requests.post(f"{API_BASE}/api/pings", 
                          headers={"Content-Type":"application/json"}, 
@@ -315,6 +246,7 @@ def make_button(x, y, w, h, label, color):
 clock = pygame.time.Clock()
 
 # ====== RENDER FUNCTIONS ======
+
 def render_start():
     """Initial welcome screen"""
     screen.fill(BG)
@@ -328,85 +260,17 @@ def render_start():
     return [btn]
 
 def render_align():
-    """Enhanced satellite alignment screen with compass visualization"""
+    """Satellite alignment instruction screen"""
     screen.fill(BG)
     
-    # Title
-    draw_text_center("Align with Satellite", 60, ACCENT)
-    
     if satellite_info:
-        # Main arrow pointing to satellite
-        center_x, center_y = W//2, H//2
-        arrow_radius = 180
-        
-        # Draw compass circle background
-        pygame.draw.circle(screen, (30, 35, 45), (center_x, center_y), arrow_radius + 20, 3)
-        
-        # Draw cardinal direction markers
-        marker_radius = arrow_radius + 40
-        for angle, label in [(0, "N"), (90, "E"), (180, "S"), (270, "W")]:
-            angle_rad = math.radians(angle - 90)  # Adjust so 0 is North
-            marker_x = center_x + marker_radius * math.cos(angle_rad)
-            marker_y = center_y + marker_radius * math.sin(angle_rad)
-            
-            marker_txt = FONT.render(label, True, FG)
-            marker_rect = marker_txt.get_rect(center=(marker_x, marker_y))
-            screen.blit(marker_txt, marker_rect)
-        
-        # Draw the arrow pointing to satellite
-        draw_bearing_arrow(screen, center_x, center_y, arrow_radius, satellite_info['bearing'])
-        
-        # Display satellite info
-        info_y = center_y + arrow_radius + 100
-        sat_name = satellite_info['name'].strip()
-        name_txt = FONT.render(f"Target: {sat_name[:20]}", True, ACCENT)
-        screen.blit(name_txt, name_txt.get_rect(center=(W//2, info_y)))
-        
-        dist_txt = FONT_SMALL.render(
-            f"Distance: {satellite_info['distance_km']:.1f} km", 
-            True, FG
-        )
-        screen.blit(dist_txt, dist_txt.get_rect(center=(W//2, info_y + 40)))
-        
-        # Compass heading info
-        try:
-            current_heading = compass.get_heading()
-            direction = compass.get_cardinal_direction()
-            
-            heading_txt = FONT_SMALL.render(
-                f"Your heading: {current_heading:.0f}° ({direction})", 
-                True, FG
-            )
-            screen.blit(heading_txt, heading_txt.get_rect(center=(W//2, info_y + 75)))
-            
-            # Calculate and show how much to turn
-            turn_amount = satellite_info['bearing'] - current_heading
-            while turn_amount > 180:
-                turn_amount -= 360
-            while turn_amount < -180:
-                turn_amount += 360
-            
-            if abs(turn_amount) < 10:
-                turn_txt = FONT_SMALL.render("✓ ALIGNED!", True, OK)
-            else:
-                turn_direction = "RIGHT" if turn_amount > 0 else "LEFT"
-                turn_txt = FONT_SMALL.render(
-                    f"Turn {turn_direction} {abs(turn_amount):.0f}°", 
-                    True, WARN
-                )
-            screen.blit(turn_txt, turn_txt.get_rect(center=(W//2, info_y + 110)))
-            
-        except Exception as e:
-            err_txt = FONT_SMALL.render(f"Compass error: {e}", True, ERR)
-            screen.blit(err_txt, err_txt.get_rect(center=(W//2, info_y + 75)))
+        draw_text_center("Face device to satellite", H//2 - 100, ACCENT)
+        sat_name = satellite_info['name'][:25]  # Truncate if too long
+        draw_text_center(sat_name, H//2, FG, FONT_MED)
+        draw_text_center(f"Bearing: {satellite_info['bearing']:.1f}°", H//2 + 60, ACCENT, FONT)
+        draw_text_center(f"Distance: {satellite_info['distance_km']:.1f} km", H//2 + 100, ACCENT, FONT)
     else:
-        # No satellite found
         draw_text_center("Searching for satellite...", H//2 - 50, WARN)
-        
-        # Add a loading animation
-        dots = "." * (int(time.time() * 2) % 4)
-        loading_txt = FONT.render(f"Please wait{dots}", True, FG)
-        screen.blit(loading_txt, loading_txt.get_rect(center=(W//2, H//2 + 20)))
     
     # Continue button
     btn_w_center = 300

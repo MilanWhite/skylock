@@ -3,7 +3,6 @@ from typing import Optional, List, Dict, Any
 import math
 
 from sgp4.api import Satrec, jday
-
 from server.model.repository import ITleRepository, SqliteTleRepository
 
 # OOP interface for satellite service
