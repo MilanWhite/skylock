@@ -36,32 +36,25 @@ Date: November 2025
 """
 
 import time
-import board
-import busio
-from adafruit_ds3231 import DS3231
+from datetime import datetime
 
 
 class RTCManager:
     """
     Manager class for DS3231 Real-Time Clock operations.
 
-    This class provides convenient methods to read time, date, and temperature
-    from the DS3231 RTC module connected via I2C.
+    This class reads time from the Raspberry Pi system clock, which is
+    synchronized with the DS3231 RTC via the kernel driver.
+    This avoids I2C address conflicts while still using the RTC.
     """
 
     def __init__(self):
         """
-        Initialize the RTC manager and establish I2C connection.
+        Initialize the RTC manager.
 
-        Raises:
-            RuntimeError: If RTC cannot be initialized (check wiring/I2C)
+        Uses system time which is synced with DS3231 via kernel driver.
         """
-        try:
-            self.i2c = busio.I2C(board.SCL, board.SDA)
-            self.rtc = DS3231(self.i2c)
-            print("✓ DS3231 RTC initialized successfully")
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize RTC: {e}")
+        print("✓ RTC Manager initialized (using system time synced with DS3231)")
 
     def get_datetime_string(self, format_24h=True):
         """
@@ -73,18 +66,12 @@ class RTCManager:
         Returns:
             str: Formatted datetime string (e.g., "2025-11-07 18:30:45")
         """
-        t = self.rtc.datetime
+        now = datetime.now()
 
         if format_24h:
-            return (f"{t.tm_year:04d}-{t.tm_mon:02d}-{t.tm_mday:02d} "
-                   f"{t.tm_hour:02d}:{t.tm_min:02d}:{t.tm_sec:02d}")
+            return now.strftime("%Y-%m-%d %H:%M:%S")
         else:
-            hour_12 = t.tm_hour % 12
-            if hour_12 == 0:
-                hour_12 = 12
-            am_pm = "AM" if t.tm_hour < 12 else "PM"
-            return (f"{t.tm_year:04d}-{t.tm_mon:02d}-{t.tm_mday:02d} "
-                   f"{hour_12:02d}:{t.tm_min:02d}:{t.tm_sec:02d} {am_pm}")
+            return now.strftime("%Y-%m-%d %I:%M:%S %p")
 
     def get_time_string(self, format_24h=True):
         """
@@ -96,16 +83,12 @@ class RTCManager:
         Returns:
             str: Formatted time string (e.g., "18:30:45" or "06:30:45 PM")
         """
-        t = self.rtc.datetime
+        now = datetime.now()
 
         if format_24h:
-            return f"{t.tm_hour:02d}:{t.tm_min:02d}:{t.tm_sec:02d}"
+            return now.strftime("%H:%M:%S")
         else:
-            hour_12 = t.tm_hour % 12
-            if hour_12 == 0:
-                hour_12 = 12
-            am_pm = "AM" if t.tm_hour < 12 else "PM"
-            return f"{hour_12:02d}:{t.tm_min:02d}:{t.tm_sec:02d} {am_pm}"
+            return now.strftime("%I:%M:%S %p")
 
     def get_date_string(self):
         """
@@ -114,8 +97,8 @@ class RTCManager:
         Returns:
             str: Formatted date string (e.g., "2025-11-07")
         """
-        t = self.rtc.datetime
-        return f"{t.tm_year:04d}-{t.tm_mon:02d}-{t.tm_mday:02d}"
+        now = datetime.now()
+        return now.strftime("%Y-%m-%d")
 
     def get_datetime_components(self):
         """
@@ -124,9 +107,9 @@ class RTCManager:
         Returns:
             tuple: (year, month, day, hour, minute, second)
         """
-        t = self.rtc.datetime
-        return (t.tm_year, t.tm_mon, t.tm_mday,
-                t.tm_hour, t.tm_min, t.tm_sec)
+        now = datetime.now()
+        return (now.year, now.month, now.day,
+                now.hour, now.minute, now.second)
 
     def get_timestamp(self):
         """
@@ -139,16 +122,24 @@ class RTCManager:
 
     def get_temperature(self):
         """
-        Get temperature from DS3231's built-in sensor.
+        Get temperature from Raspberry Pi CPU.
+
+        Note: This returns CPU temperature, not DS3231 sensor temperature.
+        The DS3231 temperature is not accessible when using kernel driver.
 
         Returns:
-            float: Temperature in Celsius
+            float: CPU temperature in Celsius
         """
-        return self.rtc.temperature
+        try:
+            with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
+                temp = float(f.read()) / 1000.0
+            return temp
+        except:
+            return 0.0
 
     def set_datetime(self, year, month, day, hour, minute, second):
         """
-        Set the RTC time manually.
+        Set the system time manually (requires sudo).
 
         Args:
             year (int): Year (e.g., 2025)
@@ -160,10 +151,18 @@ class RTCManager:
 
         Example:
             rtc.set_datetime(2025, 11, 7, 18, 30, 0)
+
+        Note: This sets system time. The DS3231 will be updated automatically
+              by the kernel driver.
         """
-        t = time.struct_time((year, month, day, hour, minute, second, 0, 0, -1))
-        self.rtc.datetime = t
-        print(f"✓ RTC time set to: {self.get_datetime_string()}")
+        import os
+        date_string = f"{year}-{month:02d}-{day:02d} {hour:02d}:{minute:02d}:{second:02d}"
+        result = os.system(f"sudo date -s '{date_string}' > /dev/null 2>&1")
+
+        if result == 0:
+            print(f"✓ System time set to: {self.get_datetime_string()}")
+        else:
+            print("⚠ Failed to set time (may need sudo privileges)")
 
     def get_day_of_week(self):
         """
@@ -172,10 +171,8 @@ class RTCManager:
         Returns:
             str: Day name (e.g., "Monday", "Tuesday")
         """
-        t = self.rtc.datetime
-        days = ["Monday", "Tuesday", "Wednesday", "Thursday",
-                "Friday", "Saturday", "Sunday"]
-        return days[t.tm_wday]
+        now = datetime.now()
+        return now.strftime("%A")
 
     def get_am_pm(self):
         """
@@ -184,8 +181,8 @@ class RTCManager:
         Returns:
             str: 'AM' if time is before noon, otherwise 'PM'
         """
-        t = self.rtc.datetime
-        return "AM" if t.tm_hour < 12 else "PM"
+        now = datetime.now()
+        return "AM" if now.hour < 12 else "PM"
 
     def is_daytime(self, sunrise_hour=6, sunset_hour=18):
         """
@@ -198,8 +195,8 @@ class RTCManager:
         Returns:
             bool: True if daytime, False if nighttime
         """
-        t = self.rtc.datetime
-        return sunrise_hour <= t.tm_hour < sunset_hour
+        now = datetime.now()
+        return sunrise_hour <= now.hour < sunset_hour
 
     def get_formatted_display(self):
         """
@@ -208,13 +205,13 @@ class RTCManager:
         Returns:
             str: Multi-line formatted display string
         """
-        t = self.rtc.datetime
+        now = datetime.now()
         day_name = self.get_day_of_week()
         temp = self.get_temperature()
 
-        return (f"{day_name}, {t.tm_mday:02d}/{t.tm_mon:02d}/{t.tm_year}\n"
-                f"{t.tm_hour:02d}:{t.tm_min:02d}:{t.tm_sec:02d}\n"
-                f"Temperature: {temp:.1f}°C")
+        return (f"{day_name}, {now.day:02d}/{now.month:02d}/{now.year}\n"
+                f"{now.hour:02d}:{now.minute:02d}:{now.second:02d}\n"
+                f"CPU Temperature: {temp:.1f}°C")
 
 
 # Example usage and testing
