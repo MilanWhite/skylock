@@ -77,6 +77,15 @@ class CompassManager:
             RuntimeError: If sensors cannot be initialized
         """
         try:
+            # Helpful pre-check: make sure Blinka/board exposes SCL/SDA
+            if not hasattr(board, 'SCL') or not hasattr(board, 'SDA'):
+                raise RuntimeError(
+                    "board.SCL / board.SDA not found. "
+                    "This usually means Adafruit Blinka is not installed or not configured. "
+                    "On Raspberry Pi: enable I2C (raspi-config -> Interface Options -> I2C) and install Blinka: "
+                    "sudo pip3 install adafruit-blinka && sudo pip3 install adafruit-circuitpython-lsm303dlh-mag adafruit-circuitpython-lsm303-accel"
+                )
+
             self.i2c = busio.I2C(board.SCL, board.SDA)
             self.mag = LSM303DLH_Mag(self.i2c)
             self.accel = LSM303_Accel(self.i2c)
