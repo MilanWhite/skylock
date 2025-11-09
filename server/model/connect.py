@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from pathlib import Path
 
 # Define the database path relative to the project root
 # (assuming the main script runs from the root)
@@ -9,10 +10,10 @@ def get_db_connection():
     """Establishes a connection to the SQLite database and ensures tables exist."""
 
     # Ensure the database directory exists
-    db_dir = os.path.dirname(DB_PATH)
-    if db_dir and not os.path.exists(db_dir):
+    db_dir = DB_PATH.parent
+    if not db_dir.exists():
         print(f"Creating database directory: {db_dir}")
-        os.makedirs(db_dir)
+        db_dir.mkdir(parents=True, exist_ok=True)
 
     conn = sqlite3.connect(DB_PATH)
     

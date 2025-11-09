@@ -15,7 +15,6 @@ from server.model.repository import SqliteTleRepository
 from server.service.satellite_service import Sgp4SatelliteService
 from server.service.tle_scheduler_service import TleSchedulerService
 
-
 def pretty_print_satellite(info: dict):
     if info is None:
         print("No satellite found (empty DB or all TLEs invalid).")
@@ -64,4 +63,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        # Attempt to stop the scheduler cleanly on exit (no-op if not running)
+        try:
+            # scheduler may be out of scope if main() raised before creating it
+            if 'scheduler' in globals() and scheduler is not None:
+                scheduler.stop()
+        except Exception:
+            pass
