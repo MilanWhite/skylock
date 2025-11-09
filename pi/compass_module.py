@@ -42,18 +42,8 @@ For best results, calibrate the magnetometer:
 """
 import time
 import math
-
-# Try different I2C initialization methods
-try:
-    import board
-    import busio
-    I2C_METHOD = 'board'
-except (NotImplementedError, AttributeError):
-    # Fallback if board.SCL/SDA not available
-    import busio
-    from board import SCL, SDA
-    I2C_METHOD = 'direct'
-
+import board
+import busio
 from adafruit_lsm303dlh_mag import LSM303DLH_Mag
 from adafruit_lsm303_accel import LSM303_Accel
 
@@ -77,16 +67,10 @@ class CompassManager:
             RuntimeError: If sensors cannot be initialized
         """
         try:
-            # Helpful pre-check: make sure Blinka/board exposes SCL/SDA
-            if not hasattr(board, 'SCL') or not hasattr(board, 'SDA'):
-                raise RuntimeError(
-                    "board.SCL / board.SDA not found. "
-                    "This usually means Adafruit Blinka is not installed or not configured. "
-                    "On Raspberry Pi: enable I2C (raspi-config -> Interface Options -> I2C) and install Blinka: "
-                    "sudo pip3 install adafruit-blinka && sudo pip3 install adafruit-circuitpython-lsm303dlh-mag adafruit-circuitpython-lsm303-accel"
-                )
-
+            # Initialize I2C bus
             self.i2c = busio.I2C(board.SCL, board.SDA)
+
+            # Initialize magnetometer and accelerometer
             self.mag = LSM303DLH_Mag(self.i2c)
             self.accel = LSM303_Accel(self.i2c)
 
@@ -101,6 +85,30 @@ class CompassManager:
 
             print("✓ Compass initialized successfully")
 
+        except AttributeError as e:
+            raise RuntimeError(
+                f"Failed to initialize compass: {e}\n"
+                "This usually means:\n"
+                "1. Adafruit Blinka is not installed properly\n"
+                "2. I2C is not enabled on your Raspberry Pi\n"
+                "3. The board module doesn't have SCL/SDA pins defined\n\n"
+                "To fix:\n"
+                "- Enable I2C: sudo raspi-config -> Interface Options -> I2C\n"
+                "- Install Blinka: sudo pip3 install adafruit-blinka\n"
+                "- Install sensor libraries:\n"
+                "  sudo pip3 install adafruit-circuitpython-lsm303dlh-mag\n"
+                "  sudo pip3 install adafruit-circuitpython-lsm303-accel"
+            )
+        except ValueError as e:
+            raise RuntimeError(
+                f"Failed to initialize compass: {e}\n"
+                "This usually means the sensor is not detected on the I2C bus.\n\n"
+                "To troubleshoot:\n"
+                "1. Check wiring connections (SDA, SCL, VCC, GND)\n"
+                "2. Run: sudo i2cdetect -y 1\n"
+                "   You should see devices at 0x19 (accel) and 0x1e (mag)\n"
+                "3. Make sure I2C is enabled: sudo raspi-config"
+            )
         except Exception as e:
             raise RuntimeError(f"Failed to initialize compass: {e}")
 
