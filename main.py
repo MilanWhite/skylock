@@ -43,7 +43,7 @@ def main():
 
     # Set up repository and services
     repo = SqliteTleRepository()
-    scheduler = TleSchedulerService(repo, tle_group="active", interval_seconds=3600)
+    scheduler = TleSchedulerService(repo, tle_group="amateur", interval_seconds=3600)
     service = Sgp4SatelliteService(repo)
 
     # Start scheduler with initial fetch

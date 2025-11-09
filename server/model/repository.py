@@ -128,13 +128,18 @@ class TleRepositoryUtils:
     @staticmethod
     def fetch_and_store_group(repo: ITleRepository, group: str, timeout: int):
         """High-level function: fetches, parses, and stores TLEs for a single group using a repository instance."""
-        source_name = f'celestrak:{group}'
-        print(f'Fetching group: {group}')
-        # 1. Fetch
-        text = repo.fetch_tle_group(group, timeout=timeout)
-        # 2. Parse
-        tles = repo.parse_tles(text)
-        print(f'  parsed {len(tles)} TLE entries from group {group}')
-        # 3. Store
-        repo.upsert_tles(tles, source=source_name)
-        print(f'  Successfully stored group {group} in the database.')
+
+        # MARK: uncomment later when demo to prevent rate limit from celestrak
+
+
+        # source_name = f'celestrak:{group}'
+        # print(f'Fetching group: {group}')
+
+        # # 1. Fetch
+        # text = repo.fetch_tle_group(group, timeout=timeout)
+        # # 2. Parse
+        # tles = repo.parse_tles(text)
+        # print(f'  parsed {len(tles)} TLE entries from group {group}')
+        # # 3. Store
+        # repo.upsert_tles(tles, source=source_name)
+        # print(f'  Successfully stored group {group} in the database.')

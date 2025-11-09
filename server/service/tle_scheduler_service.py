@@ -19,30 +19,23 @@ class TleSchedulerService:
         self._last_fetch_time = None
         self._conn_manager = connection_manager or ConnectionManager()
 
-    def _has_connection(self) -> bool:
-        return self._conn_manager.is_available()
-
-    def _fetch_and_store(self):
-        try:
-            text = self.repo.fetch_tle_group(self.tle_group)
-            tles = self.repo.parse_tles(text)
-            self.repo.upsert_tles(tles, source=f'celestrak:{self.tle_group}')
-            self._last_fetch_time = datetime.now()
-            print(f"[TleSchedulerService] Fetched and stored TLEs for group {self.tle_group} at {self._last_fetch_time}")
-        except Exception as e:
-            print(f"[TleSchedulerService] Error fetching TLEs: {e}")
-
     def _run(self):
         while not self._stop_event.is_set():
             now = datetime.now()
             # If never fetched or it's been more than interval, try to fetch
             if (self._last_fetch_time is None or
                 (now - self._last_fetch_time) >= timedelta(seconds=self.interval)):
-                if self._has_connection():
-                    self._fetch_and_store()
-                else:
-                    status = self._conn_manager.get_connection_status()
-                    print(f"[TleSchedulerService] No connection available. Status: {status}")
+                try:
+                    if self._conn_manager.is_available():
+                        # Use TleRepositoryUtils for the high-level fetch and store operation
+                        from server.model.repository import TleRepositoryUtils
+                        TleRepositoryUtils.fetch_and_store_group(self.repo, self.tle_group, timeout=20)
+                        self._last_fetch_time = datetime.now()
+                    else:
+                        status = self._conn_manager.get_connection_status()
+                        print(f"[TleSchedulerService] No connection available. Status: {status}")
+                except Exception as e:
+                    print(f"[TleSchedulerService] Error in scheduler loop: {e}")
             # Sleep in short intervals to allow quick recovery after connection returns
             time.sleep(60)
 
@@ -50,11 +43,9 @@ class TleSchedulerService:
         """Performs initial data fetch when service starts."""
         print("[TleSchedulerService] Performing initial data fetch...")
         try:
-            text = self.repo.fetch_tle_group(self.tle_group)
-            tles = self.repo.parse_tles(text)
-            self.repo.upsert_tles(tles, source=f'celestrak:{self.tle_group}')
+            from server.model.repository import TleRepositoryUtils
+            TleRepositoryUtils.fetch_and_store_group(self.repo, self.tle_group, timeout=20)
             self._last_fetch_time = datetime.now()
-            print(f"[TleSchedulerService] Successfully fetched and stored {len(tles)} satellites")
         except Exception as e:
             print(f"[TleSchedulerService] Warning: Could not fetch new data: {e}")
             print("[TleSchedulerService] Will use existing data from database")
