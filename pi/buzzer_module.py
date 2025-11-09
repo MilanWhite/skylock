@@ -75,22 +75,36 @@ class BuzzerManager:
         """
 
         self.pin = pin
-        self.buzzer_type = 'active'
+        # Respect the requested buzzer type (default 'active')
+        if buzzer_type not in ('active', 'passive'):
+            raise ValueError("buzzer_type must be 'active' or 'passive'")
+        self.buzzer_type = buzzer_type
 
         # Setup GPIO
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         GPIO.setup(self.pin, GPIO.OUT)
 
-        print(f"✓ Buzzer initialized on GPIO {self.pin} (active)")
+        # Confirmation message
+        print(f"✓ Buzzer initialized on GPIO {self.pin} ({self.buzzer_type})")
 
     def on(self):
         """Turn buzzer on continuously."""
         GPIO.output(self.pin, GPIO.HIGH)
 
+    # Convenience alias
+    def turn_on(self):
+        """Alias for on() to make API clearer for callers."""
+        self.on()
+
     def off(self):
         """Turn buzzer off."""
         GPIO.output(self.pin, GPIO.LOW)
+
+    # Convenience alias
+    def turn_off(self):
+        """Alias for off() to make API clearer for callers."""
+        self.off()
 
     def beep(self, duration=0.1, times=1, pause=0.1):
         """
@@ -107,6 +121,31 @@ class BuzzerManager:
             self.off()
             if i < times - 1:  # Don't pause after last beep
                 time.sleep(pause)
+
+    def beep_custom(self, times, duration, pause=0.1):
+        """Convenience wrapper that validates arguments and calls beep.
+
+        Args:
+            times (int): number of beeps (must be >=1)
+            duration (float): seconds each beep lasts (must be >0)
+            pause (float): pause between beeps in seconds (>=0)
+        """
+        # Basic validation and normalization
+        try:
+            times = int(times)
+            duration = float(duration)
+            pause = float(pause)
+        except Exception:
+            raise ValueError("times must be int-like, duration and pause must be numbers")
+
+        if times < 1:
+            raise ValueError("times must be >= 1")
+        if duration <= 0:
+            raise ValueError("duration must be > 0")
+        if pause < 0:
+            raise ValueError("pause must be >= 0")
+
+        self.beep(duration=duration, times=times, pause=pause)
 
     def beep_pattern(self, pattern):
         """
@@ -125,104 +164,6 @@ class BuzzerManager:
             self.off()
             if i < len(pattern) - 1:
                 time.sleep(0.1)  # Short pause between beeps
-
-    def play_tone(self, frequency, duration=0.5):
-        """
-        Play a specific tone.
-
-        Note: passive-tone generation is not supported. For active buzzers
-        we emulate a tone by a short on/off beep of the requested duration.
-
-        Args:
-            frequency (int|str): Ignored for active buzzers (kept for API
-                compatibility).
-            duration (float): Duration in seconds
-        """
-        # For active buzzer, just turn on for duration
-        self.on()
-        time.sleep(duration)
-        self.off()
-
-    def play_melody(self, notes, durations):
-        """
-        Play a melody.
-
-        Note: real melodies require a passive buzzer (PWM). For active
-        buzzers we fall back to a sequence of beeps using the durations
-        provided.
-
-        Args:
-            notes (list): Ignored for active buzzers (kept for API compatibility)
-            durations (list): List of durations in seconds
-        """
-        if len(durations) == 0:
-            return
-
-        # Play a sequence of beeps for each duration
-        for duration in durations:
-            self.beep(duration=duration)
-            time.sleep(0.05)
-
-    # ============================================================
-    # Pre-defined Sound Patterns
-    # ============================================================
-
-    def success_sound(self):
-        """Play success notification sound."""
-        # Quick double beep
-        self.beep(0.1, times=2, pause=0.05)
-
-    def error_sound(self):
-        """Play error notification sound."""
-        # Long beep
-        self.beep(0.5)
-
-    def warning_sound(self):
-        """Play warning notification sound."""
-        # Three quick beeps
-        self.beep(0.1, times=3, pause=0.1)
-
-    def startup_sound(self):
-        """Play startup/boot sound."""
-        # Two beeps
-        self.beep(0.1, times=2, pause=0.2)
-
-    def sos_pattern(self):
-        """Play SOS pattern (... --- ...)."""
-        pattern = [
-            0.1, 0.1, 0.1,  # S (short-short-short)
-            0.3, 0.3, 0.3,  # O (long-long-long)
-            0.1, 0.1, 0.1   # S (short-short-short)
-        ]
-        self.beep_pattern(pattern)
-
-    def alarm_sound(self, duration=3):
-        """
-        Play alarm sound for specified duration.
-
-        Args:
-            duration (float): Total duration in seconds
-        """
-        # Rapid beeping for active buzzer
-        beep_count = max(1, int(duration / 0.3))
-        self.beep(0.15, times=beep_count, pause=0.15)
-
-    def notification_sound(self, level='info'):
-        """
-        Play notification sound based on level.
-
-        Args:
-            level (str): 'info', 'success', 'warning', or 'error'
-        """
-        sounds = {
-            'info': lambda: self.beep(0.1),
-            'success': self.success_sound,
-            'warning': self.warning_sound,
-            'error': self.error_sound
-        }
-
-        sound_func = sounds.get(level.lower(), lambda: self.beep(0.1))
-        sound_func()
 
     def cleanup(self):
         """Clean up GPIO resources."""
@@ -264,12 +205,6 @@ if __name__ == "__main__":
         print("Select test:")
         print("1. Single beep")
         print("2. Multiple beeps")
-        print("3. Success sound")
-        print("4. Error sound")
-        print("5. Warning sound")
-        print("6. Startup sound")
-        print("7. SOS pattern")
-        print("8. Alarm (3 seconds)")
 
         # No passive buzzer options available
 
@@ -281,35 +216,20 @@ if __name__ == "__main__":
             buzzer.beep()
 
         elif test_choice == '2':
-            print("Playing 3 beeps...")
-            buzzer.beep(times=3, duration=0.2, pause=0.2)
+            # Prompt user for number of beeps and duration
+            times_input = input("Enter number of beeps [3]: ").strip()
+            duration_input = input("Enter duration of each beep in seconds [0.2]: ").strip()
+            pause_input = input("Enter pause between beeps in seconds [0.2]: ").strip()
 
-        elif test_choice == '3':
-            print("Playing success sound...")
-            buzzer.success_sound()
+            times = int(times_input) if times_input else 3
+            duration = float(duration_input) if duration_input else 0.2
+            pause = float(pause_input) if pause_input else 0.2
 
-        elif test_choice == '4':
-            print("Playing error sound...")
-            buzzer.error_sound()
-
-        elif test_choice == '5':
-            print("Playing warning sound...")
-            buzzer.warning_sound()
-
-        elif test_choice == '6':
-            print("Playing startup sound...")
-            buzzer.startup_sound()
-
-        elif test_choice == '7':
-            print("Playing SOS pattern...")
-            buzzer.sos_pattern()
-
-        elif test_choice == '8':
-            print("Playing alarm for 3 seconds...")
-            buzzer.alarm_sound(duration=3)
+            print(f"Playing {times} beeps, {duration}s each, {pause}s pause...")
+            buzzer.beep_custom(times=times, duration=duration, pause=pause)
 
         else:
-            # All melody/tone-specific features were removed; keep other options
+
             print("Invalid or unsupported choice")
 
         print("\n" + "="*60)

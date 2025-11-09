@@ -177,6 +177,16 @@ class RTCManager:
                 "Friday", "Saturday", "Sunday"]
         return days[t.tm_wday]
 
+    def get_am_pm(self):
+        """
+        Get the current period of day as 'AM' or 'PM'.
+
+        Returns:
+            str: 'AM' if time is before noon, otherwise 'PM'
+        """
+        t = self.rtc.datetime
+        return "AM" if t.tm_hour < 12 else "PM"
+
     def is_daytime(self, sunrise_hour=6, sunset_hour=18):
         """
         Check if current time is during daytime hours.
@@ -246,17 +256,36 @@ if __name__ == "__main__":
         print()
 
         # Live clock demonstration
-        print("Live Clock (press Ctrl+C to stop):")
-        print("-"*60)
+        # Quick query menu for user to get time/date/AM-PM
+        print("Quick queries:")
+        print("  1) Show current time (24-hour)")
+        print("  2) Show current time (12-hour with AM/PM)")
+        print("  3) Show current date")
+        print("  4) Show AM/PM")
+        print("  5) Start live clock (press Ctrl+C to stop)")
 
-        while True:
-            # Clear line and print time
-            time_str = rtc.get_datetime_string()
-            temp = rtc.get_temperature()
-            day = rtc.get_day_of_week()
+        q = input("Enter choice [1]: ").strip()
+        if q == "" or q == "1":
+            print(f"Current time (24h): {rtc.get_time_string(format_24h=True)}")
+        elif q == "2":
+            print(f"Current time (12h): {rtc.get_time_string(format_24h=False)}")
+        elif q == "3":
+            print(f"Current date: {rtc.get_date_string()}")
+        elif q == "4":
+            print(f"Current period: {rtc.get_am_pm()}")
+        elif q == "5":
+            print("Live Clock (press Ctrl+C to stop):")
+            print("-"*60)
+            while True:
+                # Clear line and print time
+                time_str = rtc.get_datetime_string()
+                temp = rtc.get_temperature()
+                day = rtc.get_day_of_week()
 
-            print(f"{day} | {time_str} | Temp: {temp:.1f}°C", end='\r')
-            time.sleep(1)
+                print(f"{day} | {time_str} | Temp: {temp:.1f}°C", end='\r')
+                time.sleep(1)
+        else:
+            print("Invalid choice, exiting test.")
 
     except KeyboardInterrupt:
         print("\n" + "-"*60)
