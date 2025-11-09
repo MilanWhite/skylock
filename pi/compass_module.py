@@ -40,11 +40,20 @@ For best results, calibrate the magnetometer:
     # Follow on-screen instructions to rotate sensor
 
 """
-
 import time
 import math
-import board
-import busio
+
+# Try different I2C initialization methods
+try:
+    import board
+    import busio
+    I2C_METHOD = 'board'
+except (NotImplementedError, AttributeError):
+    # Fallback if board.SCL/SDA not available
+    import busio
+    from board import SCL, SDA
+    I2C_METHOD = 'direct'
+
 from adafruit_lsm303dlh_mag import LSM303DLH_Mag
 from adafruit_lsm303_accel import LSM303_Accel
 
