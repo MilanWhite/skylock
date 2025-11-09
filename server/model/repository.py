@@ -1,9 +1,9 @@
-import requests
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Protocol, runtime_checkable
 import abc
 
 from server.model.connect import get_db_connection
+from server.service.connection_manager import IConnectionManager, ConnectionManager
 
 
 CELESTRAK_URL = "https://celestrak.org/NORAD/elements/gp.php"
@@ -37,8 +37,9 @@ class ITleRepository(abc.ABC):
 
 # Concrete implementation using SQLite
 class SqliteTleRepository(ITleRepository):
-    def __init__(self, conn=None):
+    def __init__(self, conn=None, connection_manager: Optional[IConnectionManager] = None):
         self._external_conn = conn
+        self._conn_manager = connection_manager or ConnectionManager()
 
     def _get_conn(self):
         if self._external_conn is not None:
@@ -95,9 +96,7 @@ class SqliteTleRepository(ITleRepository):
 
     def fetch_tle_group(self, group: str, timeout=20) -> str:
         params = { 'GROUP': group, 'FORMAT': 'tle' }
-        resp = requests.get(CELESTRAK_URL, params=params, timeout=timeout)
-        resp.raise_for_status()
-        return resp.text
+        return self._conn_manager.fetch_url(CELESTRAK_URL, params=params, timeout=timeout)
 
     def parse_tles(self, text: str):
         lines = [l.rstrip('\n') for l in text.splitlines() if l.strip() != '']
