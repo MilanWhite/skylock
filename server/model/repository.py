@@ -1,9 +1,9 @@
-import requests
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Protocol, runtime_checkable
 import abc
 
 from server.model.connect import get_db_connection
+from server.service.connection_manager import IConnectionManager, ConnectionManager
 
 
 CELESTRAK_URL = "https://celestrak.org/NORAD/elements/gp.php"
@@ -37,8 +37,9 @@ class ITleRepository(abc.ABC):
 
 # Concrete implementation using SQLite
 class SqliteTleRepository(ITleRepository):
-    def __init__(self, conn=None):
+    def __init__(self, conn=None, connection_manager: Optional[IConnectionManager] = None):
         self._external_conn = conn
+        self._conn_manager = connection_manager or ConnectionManager()
 
     def _get_conn(self):
         if self._external_conn is not None:
@@ -95,9 +96,7 @@ class SqliteTleRepository(ITleRepository):
 
     def fetch_tle_group(self, group: str, timeout=20) -> str:
         params = { 'GROUP': group, 'FORMAT': 'tle' }
-        resp = requests.get(CELESTRAK_URL, params=params, timeout=timeout)
-        resp.raise_for_status()
-        return resp.text
+        return self._conn_manager.fetch_url(CELESTRAK_URL, params=params, timeout=timeout)
 
     def parse_tles(self, text: str):
         lines = [l.rstrip('\n') for l in text.splitlines() if l.strip() != '']
@@ -129,13 +128,18 @@ class TleRepositoryUtils:
     @staticmethod
     def fetch_and_store_group(repo: ITleRepository, group: str, timeout: int):
         """High-level function: fetches, parses, and stores TLEs for a single group using a repository instance."""
-        source_name = f'celestrak:{group}'
-        print(f'Fetching group: {group}')
-        # 1. Fetch
-        text = repo.fetch_tle_group(group, timeout=timeout)
-        # 2. Parse
-        tles = repo.parse_tles(text)
-        print(f'  parsed {len(tles)} TLE entries from group {group}')
-        # 3. Store
-        repo.upsert_tles(tles, source=source_name)
-        print(f'  Successfully stored group {group} in the database.')
+
+        # MARK: uncomment later when demo to prevent rate limit from celestrak
+
+
+        # source_name = f'celestrak:{group}'
+        # print(f'Fetching group: {group}')
+
+        # # 1. Fetch
+        # text = repo.fetch_tle_group(group, timeout=timeout)
+        # # 2. Parse
+        # tles = repo.parse_tles(text)
+        # print(f'  parsed {len(tles)} TLE entries from group {group}')
+        # # 3. Store
+        # repo.upsert_tles(tles, source=source_name)
+        # print(f'  Successfully stored group {group} in the database.')

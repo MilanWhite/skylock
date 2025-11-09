@@ -9,9 +9,11 @@ Notes:
 """
 from datetime import datetime, timezone
 import json
+import time
 
 from server.model.repository import SqliteTleRepository
 from server.service.satellite_service import Sgp4SatelliteService
+from server.service.tle_scheduler_service import TleSchedulerService
 
 
 def pretty_print_satellite(info: dict):
@@ -39,16 +41,26 @@ def main():
     lon_deg = -79.3950
     alt_m = 100.0
 
-    when = datetime.now(timezone.utc)
-
+    # Set up repository and services
     repo = SqliteTleRepository()
+    scheduler = TleSchedulerService(repo, tle_group="amateur", interval_seconds=3600)
     service = Sgp4SatelliteService(repo)
 
-    print(f"Finding nearest satellite to ({lat_deg}, {lon_deg}, {alt_m} m) at {when.isoformat()} UTC")
+    # Start scheduler with initial fetch
+    print("\nStarting scheduler and fetching initial data...")
+    scheduler.start(initial_fetch=True)
 
+    # Let it run for a moment to ensure initial fetch completes
+    time.sleep(2)
+
+    # Find nearest satellite
+    when = datetime.now(timezone.utc)
+    print(f"\nFinding nearest satellite to ({lat_deg}, {lon_deg}, {alt_m} m) at {when.isoformat()} UTC")
     nearest = service.find_nearest_satellite(lat_deg, lon_deg, alt_m, when=when)
-
     pretty_print_satellite(nearest)
+
+    # Stop the scheduler
+    scheduler.stop()
 
 
 if __name__ == "__main__":

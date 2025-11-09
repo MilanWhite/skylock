@@ -1,35 +1,23 @@
+import json
 import threading
 import time
-from datetime import datetime, timedelta
-import requests
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from server.model.repository import ITleRepository
+from server.service.connection_manager import IConnectionManager, ConnectionManager
 
 class TleSchedulerService:
-    def __init__(self, repo: ITleRepository, tle_group: str, interval_seconds: int = 3600):
+    def __init__(self, repo: ITleRepository, tle_group: str,
+                 interval_seconds: int = 3600,
+                 connection_manager: Optional[IConnectionManager] = None):
         self.repo = repo
         self.tle_group = tle_group
         self.interval = interval_seconds
         self._stop_event = threading.Event()
         self._thread = None
         self._last_fetch_time = None
-
-    def _has_internet(self, test_url="https://celestrak.org", timeout=5):
-        try:
-            requests.get(test_url, timeout=timeout)
-            return True
-        except Exception:
-            return False
-
-    def _fetch_and_store(self):
-        try:
-            text = self.repo.fetch_tle_group(self.tle_group)
-            tles = self.repo.parse_tles(text)
-            self.repo.upsert_tles(tles, source=f'celestrak:{self.tle_group}')
-            self._last_fetch_time = datetime.now()
-            print(f"[TleSchedulerService] Fetched and stored TLEs for group {self.tle_group} at {self._last_fetch_time}")
-        except Exception as e:
-            print(f"[TleSchedulerService] Error fetching TLEs: {e}")
+        self._conn_manager = connection_manager or ConnectionManager()
 
     def _run(self):
         while not self._stop_event.is_set():
@@ -37,15 +25,43 @@ class TleSchedulerService:
             # If never fetched or it's been more than interval, try to fetch
             if (self._last_fetch_time is None or
                 (now - self._last_fetch_time) >= timedelta(seconds=self.interval)):
-                if self._has_internet():
-                    self._fetch_and_store()
-                else:
-                    print("[TleSchedulerService] No internet connection. Will retry soon.")
+                try:
+                    if self._conn_manager.is_available():
+                        # Use TleRepositoryUtils for the high-level fetch and store operation
+                        from server.model.repository import TleRepositoryUtils
+                        TleRepositoryUtils.fetch_and_store_group(self.repo, self.tle_group, timeout=20)
+                        self._last_fetch_time = datetime.now()
+                    else:
+                        status = self._conn_manager.get_connection_status()
+                        print(f"[TleSchedulerService] No connection available. Status: {status}")
+                except Exception as e:
+                    print(f"[TleSchedulerService] Error in scheduler loop: {e}")
             # Sleep in short intervals to allow quick recovery after connection returns
             time.sleep(60)
 
-    def start(self):
+    def _do_initial_fetch(self):
+        """Performs initial data fetch when service starts."""
+        print("[TleSchedulerService] Performing initial data fetch...")
+        try:
+            from server.model.repository import TleRepositoryUtils
+            TleRepositoryUtils.fetch_and_store_group(self.repo, self.tle_group, timeout=20)
+            self._last_fetch_time = datetime.now()
+        except Exception as e:
+            print(f"[TleSchedulerService] Warning: Could not fetch new data: {e}")
+            print("[TleSchedulerService] Will use existing data from database")
+            self._last_fetch_time = None  # Force a retry on next scheduler loop
+
+    def start(self, initial_fetch=True):
+        """Start the scheduler service.
+
+        Args:
+            initial_fetch (bool): If True, performs immediate data fetch
+        """
         if self._thread is None or not self._thread.is_alive():
+            # Do initial fetch if requested
+            if initial_fetch:
+                self._do_initial_fetch()
+
             self._stop_event.clear()
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
